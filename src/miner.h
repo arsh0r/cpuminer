@@ -163,6 +163,7 @@ struct thr_info {
 	int		id;
 	pthread_t	pth;
 	struct thread_q	*q;
+	unsigned char *devname;
 };
 
 struct work_restart {

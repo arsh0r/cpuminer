@@ -110,6 +110,9 @@ static const char *algo_names[] = {
 	[ALGO_SHA256D]		= "sha256d",
 };
 
+static char *gc3355_dev = NULL;
+static char *opt_frequency = NULL;
+bool opt_dual = false;
 bool opt_debug = false;
 bool opt_protocol = false;
 static bool opt_benchmark = false;
@@ -172,6 +175,9 @@ Options:\n\
                           scrypt    scrypt(1024, 1, 1) (default)\n\
                           scrypt:N  scrypt(N, 1, 1)\n\
                           sha256d   SHA-256d\n\
+  -G, --gc3355=DEV      enable GC3355 chip mining mode (default: no)\n\
+  -F, --freq=FREQUENCY  set GC3355 core frequency in NONE dual mode (default: 600)\n\
+  -2, --dual            enable GC3355 chip dual work mode with BTC (default: no)\n\
   -o, --url=URL         URL of mining server\n\
   -O, --userpass=U:P    username:password pair for mining server\n\
   -u, --user=USERNAME   username for mining server\n\
@@ -217,10 +223,14 @@ static char const short_options[] =
 #ifdef HAVE_SYSLOG_H
 	"S"
 #endif
+	"G:F:2"
 	"a:c:Dhp:Px:qr:R:s:t:T:o:u:O:V";
 
 static struct option const options[] = {
 	{ "algo", 1, NULL, 'a' },
+	{ "gc3355", 1, NULL, 'G' },
+	{ "freq", 1, NULL, 'F' },
+	{ "dual", 0, NULL, '2'},
 #ifndef WIN32
 	{ "background", 0, NULL, 'B' },
 #endif
@@ -1120,6 +1130,10 @@ static void stratum_gen_work(struct stratum_ctx *sctx, struct work *work)
 		diff_to_target(work->target, sctx->job.diff);
 }
 
+/* added for GC3355 chip miner */
+#include "gc3355.h"
+/* end */
+
 static void *miner_thread(void *userdata)
 {
 	struct thr_info *mythr = userdata;
@@ -1528,7 +1542,7 @@ static void show_version_and_exit(void)
 #endif
 		"\n");
 
-	printf("%s\n", curl_version());
+	printf("%s\n%s\n%s\n", PACKAGE_STRING, curl_version(), GC3355_VERSION);
 #ifdef JANSSON_VERSION
 	printf("libjansson %s\n", JANSSON_VERSION);
 #endif
@@ -1582,6 +1596,15 @@ static void parse_arg(int key, char *arg, char *pname)
 				pname, arg);
 			show_usage_and_exit(1);
 		}
+		break;
+	case 'G':
+		gc3355_dev = strdup(arg);
+		break;
+	case 'F':
+		opt_frequency = strdup(arg);
+		break;
+	case '2':
+		opt_dual = true;
 		break;
 	case 'B':
 		opt_background = true;
@@ -1935,6 +1958,15 @@ int main(int argc, char *argv[])
 		num_processors = 1;
 	if (!opt_n_threads)
 		opt_n_threads = num_processors;
+	if (gc3355_dev != NULL) {
+		unsigned char *p = gc3355_dev;
+		int nn=0;
+		do {
+			p = strchr(p+1, ',');
+			nn++;
+		} while(p!=NULL);
+		opt_n_threads = nn;
+	}
 
 #ifdef HAVE_SYSLOG_H
 	if (use_syslog)
@@ -2002,24 +2034,31 @@ int main(int argc, char *argv[])
 	}
 
 	/* start mining threads */
-	for (i = 0; i < opt_n_threads; i++) {
-		thr = &thr_info[i];
-
-		thr->id = i;
-		thr->q = tq_new();
-		if (!thr->q)
+	if (opt_dual || gc3355_dev != NULL) {
+		if (create_gc3355_miner_threads(thr_info, opt_n_threads) != 0)
 			return 1;
-
-		if (unlikely(pthread_create(&thr->pth, NULL, miner_thread, thr))) {
-			applog(LOG_ERR, "thread %d create failed", i);
-			return 1;
-		}
 	}
+	else {
+		/* start CPU miner threads */
+		for (i = 0; i < opt_n_threads; i++) {
+			thr = &thr_info[i];
 
-	applog(LOG_INFO, "%d miner threads started, "
-		"using '%s' algorithm.",
-		opt_n_threads,
-		algo_names[opt_algo]);
+			thr->id = i;
+			thr->q = tq_new();
+			if (!thr->q)
+				return 1;
+
+			if (unlikely(pthread_create(&thr->pth, NULL, miner_thread, thr))) {
+				applog(LOG_ERR, "thread %d create failed", i);
+				return 1;
+			}
+		}
+
+		applog(LOG_INFO, "%d miner threads started, "
+			"using '%s' algorithm.",
+			opt_n_threads,
+			algo_names[opt_algo]);
+	} /* opt_gc3355 */
 
 	/* main loop - simply wait for workio thread to exit */
 	pthread_join(thr_info[work_thr_id].pth, NULL);

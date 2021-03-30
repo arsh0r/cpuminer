@@ -1,4 +1,3 @@
-
 if WANT_JANSSON
 JANSSON_INCLUDES= -I$(top_srcdir)/compat/jansson
 else
@@ -15,6 +14,7 @@ dist_man_MANS	= minerd.1
 
 minerd_SOURCES	= elist.h miner.h compat.h \
 		  cpu-miner.c util.c \
+		  gc3355.h \
 		  sha2.c scrypt.c
 if USE_ASM
 if ARCH_x86
